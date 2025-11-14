@@ -1,0 +1,21 @@
+[gd_scene load_steps=4 format=3 uid="uid://idl5sc013b2k"]
+
+[ext_resource type="Texture2D" uid="uid://c7smpw8tfr2b0" path="res://Sprites/Tilemaps/TileMap.png" id="1_be4t0"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_68ia7"]
+atlas = ExtResource("1_be4t0")
+region = Rect2(18.130335, 4.0752926, 9.169363, 9.169365)
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_u1pjh"]
+size = Vector2(9.028357, 8.944988)
+
+[node name="Obstacle1" type="RigidBody2D"]
+scale = Vector2(3.3860202, 3.3860202)
+gravity_scale = 1.293
+
+[node name="Sprite2D" type="Sprite2D" parent="."]
+texture = SubResource("AtlasTexture_68ia7")
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+position = Vector2(0.0093717575, -0.013576269)
+shape = SubResource("RectangleShape2D_u1pjh")

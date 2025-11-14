@@ -1,0 +1,8 @@
+# Server Configuration File
+# Put your server IP address or domain here (one line only)
+# Example: 54.123.45.67
+# Example: yourdomain.com
+# Leave as localhost for local testing
+
+localhost
+
