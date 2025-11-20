@@ -1,43 +1,34 @@
 extends Node
 
-# Network settings
 const PORT = 7777
 const MAX_PLAYERS = 100
 
-# Team tracking
 var red_team_players: Array = []
 var blue_team_players: Array = []
 
-# Player scenes
 var red_guy_scene = preload("res://Scenes/RedGuy.tscn")
 var blue_guy_scene = preload("res://Scenes/BlueGuy.tscn")
 
-# Spawn positions
 var red_spawn_position: Vector2
 var blue_spawn_position: Vector2
-
-# Reference to world
 var world: Node2D
+var players_container: Node2D
+var multiplayer_spawner: MultiplayerSpawner
 
-# Track if we're running in browser
-var is_web: bool = false
+# Player names
+var local_player_name: String = "Player"
+var player_names: Dictionary = {}  # peer_id -> name
 
 func _ready():
-	# Detect if running in browser
-	is_web = OS.has_feature("web")
-	
-	# Get world reference
 	world = get_tree().current_scene
-	
-	# Find spawn markers
+	players_container = world.get_node("Players")
+	multiplayer_spawner = world.get_node("MultiplayerSpawner")
 	find_spawn_markers()
 
 func find_spawn_markers():
-	# Look for markers named RedPlayerSpawn and BluePlayerSpawn
 	var red_marker = world.get_node_or_null("RedPlayerSpawn")
 	var blue_marker = world.get_node_or_null("BluePlayerSpawn")
 	
-	# Set spawn positions from markers or use defaults
 	if red_marker:
 		red_spawn_position = red_marker.global_position
 	else:
@@ -49,111 +40,118 @@ func find_spawn_markers():
 		blue_spawn_position = Vector2(500, 350)
 
 func start_server():
-	# WebSocket server for browser compatibility
 	var peer = WebSocketMultiplayerPeer.new()
-	
-	# Set supported protocols before creating server
 	peer.supported_protocols = ["ludus"]
 	
 	var error = peer.create_server(PORT)
-	
 	if error != OK:
-		push_error("Failed to start WebSocket server: " + str(error))
+		push_error("Failed to start server: " + str(error))
 		return
 	
 	multiplayer.multiplayer_peer = peer
-	
-	# Connect signals
 	multiplayer.peer_connected.connect(_on_player_connected)
 	multiplayer.peer_disconnected.connect(_on_player_disconnected)
 	
-	# Spawn a player for the server itself (ID = 1)
-	var team = assign_team()
-	spawn_player(1, team)
+	print("Server started on port ", PORT)
 
 func join_server(address: String):
-	# Use WebSocket for browser compatibility
 	var peer = WebSocketMultiplayerPeer.new()
-	
-	# Set supported protocols before connecting
 	peer.supported_protocols = ["ludus"]
 	
-	# Format WebSocket URL
-	var ws_url = "ws://" + address + ":" + str(PORT)
-	
-	# For web builds, check if we need wss:// (secure WebSocket)
-	if is_web and address.contains("amazonaws.com"):
-		ws_url = "wss://" + address + ":" + str(PORT)
+	var ws_url = ""
+	if OS.has_feature("web"):
+		ws_url = "wss://" + address
+		print("🌐 Browser - Connecting to: " + ws_url)
+	else:
+		ws_url = "ws://" + address + ":" + str(PORT)
+		print("🖥️ Desktop - Connecting to: " + ws_url)
 	
 	var error = peer.create_client(ws_url)
-	
 	if error != OK:
-		push_error("Failed to connect to WebSocket server: " + str(error))
+		push_error("❌ Failed to connect: " + str(error))
 		return
 	
-	multiplayer.multiplayer_peer = peer
+	print("✅ WebSocket client created, connecting...")
 	
-	# Connect signals
+	multiplayer.multiplayer_peer = peer
 	multiplayer.connected_to_server.connect(_on_connected_to_server)
 	multiplayer.connection_failed.connect(_on_connection_failed)
 
 func _on_player_connected(id: int):
-	# Assign team based on player count
-	var team = assign_team()
-	
-	# Spawn player on server
-	spawn_player(id, team)
-	
-	# Tell the client which team they're on
-	rpc_id(id, "set_team", team)
+	print("🔌 Player connected: ID ", id)
+	# Don't spawn yet - wait for player to send their name first
+	print("   → Waiting for player name...")
 
 func _on_player_disconnected(id: int):
-	# Remove from team tracking
 	red_team_players.erase(id)
 	blue_team_players.erase(id)
 	
-	# Remove their player node
-	var player = world.get_node_or_null(str(id))
+	var player = players_container.get_node_or_null(str(id))
 	if player:
 		player.queue_free()
 
 func _on_connected_to_server():
-	pass # Connected successfully
+	print("✅ Connected to server!")
+	# Send our name to the server
+	register_player_name.rpc_id(1, multiplayer.get_unique_id(), local_player_name)
 
 func _on_connection_failed():
-	push_error("Failed to connect to server")
+	push_error("❌ Connection to server failed!")
 
 func assign_team() -> String:
-	# Assign to team with fewer players
 	if red_team_players.size() <= blue_team_players.size():
 		return "red"
 	else:
 		return "blue"
 
-@rpc("authority", "call_local")
-func set_team(team: String):
-	pass # Team assigned
+@rpc("any_peer", "call_local", "reliable")
+func register_player_name(id: int, player_name: String):
+	print("📝 Received name for player ", id, ": ", player_name)
+	player_names[id] = player_name
+	
+	# If we're the server, spawn the player now
+	if multiplayer.is_server():
+		var team = assign_team()
+		print("   → Assigned to team: ", team)
+		spawn_player.rpc(id, team, player_name)
+		print("   → RPC spawn_player sent to all clients")
 
-func spawn_player(id: int, team: String):
-	var player: CharacterBody2D
+@rpc("authority", "call_local", "reliable")
+func spawn_player(id: int, team: String, player_name: String):
+	print("   → spawn_player RPC received for ID: ", id, " Team: ", team, " Name: ", player_name)
+	player_names[id] = player_name
+	
+	var player_scene: PackedScene
 	var spawn_pos: Vector2
 	
-	# Create appropriate player based on team
 	if team == "red":
-		player = red_guy_scene.instantiate()
+		player_scene = red_guy_scene
 		spawn_pos = red_spawn_position
-		red_team_players.append(id)
+		if multiplayer.is_server():
+			red_team_players.append(id)
+		print("   → Creating RED player")
 	else:
-		player = blue_guy_scene.instantiate()
+		player_scene = blue_guy_scene
 		spawn_pos = blue_spawn_position
-		blue_team_players.append(id)
+		if multiplayer.is_server():
+			blue_team_players.append(id)
+		print("   → Creating BLUE player")
 	
-	# Set player properties
+	# Instantiate the player
+	var player = player_scene.instantiate()
 	player.name = str(id)
 	player.position = spawn_pos
 	
-	# Set network authority
+	# Set authority - this will work on all clients
 	player.set_multiplayer_authority(id)
+	print("   → Set authority to ", id, " | My peer ID: ", multiplayer.get_unique_id())
 	
-	# Add to world
-	world.add_child(player)
+	# Add to Players container
+	players_container.add_child(player)
+	print("   → Player added at: ", spawn_pos)
+	print("   → Authority check: ", player.get_multiplayer_authority(), " | is_authority: ", player.is_multiplayer_authority())
+	
+	# Set player name label - use call_deferred to ensure _ready() has been called first
+	if player.has_method("set_player_name"):
+		player.call_deferred("set_player_name", player_name)
+		print("   → Name will be set to: ", player_name)

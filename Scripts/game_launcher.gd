@@ -1,103 +1,62 @@
 extends Node
 
-# This script handles the game launch logic
-# Supports browser, desktop, and dedicated server deployment
-
-@export var server_address: String = "localhost"  # Default server IP for clients
-@export var is_server: bool = false  # Set to true for the dedicated server
+@export var server_address: String = "localhost"
+@export var is_server: bool = false
 
 var network_manager: Node
-var is_web: bool = false
 
 func _ready():
-	# Detect if running in browser
-	is_web = OS.has_feature("web")
+	var is_web = OS.has_feature("web")
+	print("🎮 Game Launcher Ready - is_web:", is_web)
 	
-	# In browser, never run as server (always client)
 	if is_web:
 		is_server = false
-		# Try to get server address from URL parameters
-		if OS.has_feature("web"):
-			var url_params = get_url_params()
-			if url_params.has("server"):
-				server_address = url_params["server"]
-	
-	# Parse command-line arguments (for dedicated server)
-	if not is_web:
+		var url_params = get_url_params()
+		if url_params.has("server"):
+			server_address = url_params["server"]
+	else:
 		var args = OS.get_cmdline_args()
-		var cmd_is_server = false
-		var cmd_server_address = server_address
-		
 		for arg in args:
 			if arg == "--server" or arg == "-s":
-				cmd_is_server = true
-				print("🖥️ SERVER MODE: Enabled via command-line")
+				is_server = true
 			elif arg.begins_with("--address="):
-				cmd_server_address = arg.replace("--address=", "")
-				print("🌐 SERVER ADDRESS: ", cmd_server_address)
-			elif arg.begins_with("-a="):
-				cmd_server_address = arg.replace("-a=", "")
-				print("🌐 SERVER ADDRESS: ", cmd_server_address)
-		
-		# Command-line args override exported variables
-		if cmd_is_server:
-			is_server = true
-		if cmd_server_address != server_address:
-			server_address = cmd_server_address
+				server_address = arg.replace("--address=", "")
 	
-	# Load config file if it exists (for easy server address configuration)
-	load_config()
+	print("📡 Server Address:", server_address)
+	print("🖥️ Is Server:", is_server)
 	
-	# Create network manager
 	network_manager = load("res://Scripts/network_manager.gd").new()
 	network_manager.name = "NetworkManager"
 	add_child(network_manager)
 	
-	# Small delay to ensure everything is loaded
 	await get_tree().create_timer(0.5).timeout
 	
 	if is_server:
-		start_as_server()
+		print("🚀 Starting as SERVER")
+		network_manager.start_server()
 	else:
-		start_as_client()
+		print("🎯 Starting as CLIENT - Connecting to:", server_address)
+		
+		# Show name input UI for client
+		var name_input_scene = load("res://Scenes/name_input_ui.tscn")
+		var name_input_ui = name_input_scene.instantiate()
+		get_tree().root.add_child(name_input_ui)
+		
+		# Wait for name submission
+		var player_name = await name_input_ui.name_submitted
+		print("👤 Player Name:", player_name)
+		
+		network_manager.local_player_name = player_name
+		network_manager.join_server(server_address)
 
 func get_url_params() -> Dictionary:
 	var params = {}
 	if OS.has_feature("web"):
 		var url = JavaScriptBridge.eval("window.location.search", true)
 		if url and url.length() > 1:
-			url = url.substr(1)  # Remove '?'
+			url = url.substr(1)
 			for param in url.split("&"):
 				var kv = param.split("=")
 				if kv.size() == 2:
 					params[kv[0]] = kv[1]
 	return params
-
-func load_config():
-	# For web builds, config is embedded or passed via URL
-	if is_web:
-		return
-	
-	# Try to load server_config.txt for easy configuration
-	var config_path = "user://server_config.txt"
-	
-	# Also check next to executable
-	if not FileAccess.file_exists(config_path):
-		config_path = "res://server_config.txt"
-	
-	if FileAccess.file_exists(config_path):
-		var file = FileAccess.open(config_path, FileAccess.READ)
-		if file:
-			var content = file.get_as_text().strip_edges()
-			if content.length() > 0 and not content.begins_with("#"):
-				server_address = content
-				print("📄 Loaded server address from config: ", server_address)
-			file.close()
-
-func start_as_server():
-	print("🚀 Starting as DEDICATED SERVER")
-	network_manager.start_server()
-
-func start_as_client():
-	print("🎮 Starting as CLIENT - Connecting to: ", server_address)
-	network_manager.join_server(server_address)
